@@ -1,3 +1,23 @@
+# Custom ignores
+HISTORY.rst
+LICENSE
+NOTICE
+README.rst
+backports/
+boto3*
+botocore*
+concurrent
+configparser*
+dateutil
+docutils*
+elasticsearch*
+futures*
+jmespath*
+python_dateutil*
+requests*
+six*
+urllib3*
+
 # Created by https://www.gitignore.io/api/python
 
 ### Python ###

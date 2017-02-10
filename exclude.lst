@@ -1,0 +1,7 @@
+*.pyc
+.git*
+README.md
+Makefile
+lambda.zip
+exclude.lst
+trigger.json
