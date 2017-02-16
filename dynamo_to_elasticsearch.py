@@ -12,9 +12,6 @@ from requests_aws4auth import AWS4Auth
 # Force index refresh upon all actions for close to realtime reindexing
 # Use IAM Role for authentication
 # Properly unmarshal DynamoDB JSON types. Binary NOT tested.
-TABLE_PREFIX = 'sfdc'
-
-
 
 class Elasticsearchservice(object):
     def __init__(self, es):
@@ -90,7 +87,8 @@ class Elasticsearchservice(object):
         pass
 
 class ElasticsearchserviceDynamo(object):
-    def __init__(self, es):
+    def __init__(self, es, table_prefix):
+        self.table_prefix = table_prefix
         super(ElasticsearchserviceDynamo, self).__init__(es)
 
     def getTable(self, record):
@@ -99,7 +97,7 @@ class ElasticsearchserviceDynamo(object):
         if m is None:
             raise Exception("Table not found in SourceARN")
         real_table = m.group(1).lower()
-        return real_table, '{0}-{1}'.format(TABLE_PREFIX, real_table)
+        return real_table, '{0}-{1}'.format(self.table_prefix, real_table)
 
     # Generate the ID for ES. Used for deleting or updating item later
 
@@ -183,7 +181,8 @@ def lambda_handler(event, context):
     es = Elasticsearch(
         config['es_endpoint'], http_auth=awsauth, use_ssl=True,
         verify_certs=True, connection_class=RequestsHttpConnection)
-    ess = ElasticsearchserviceDynamo(es)
+
+    ess = ElasticsearchserviceDynamo(es, config['table_prefix'])
 
     # Loop over the DynamoDB Stream records
     for record in event['Records']:
