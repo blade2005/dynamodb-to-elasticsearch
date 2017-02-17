@@ -1,4 +1,5 @@
 from __future__ import print_function
+import json
 import ConfigParser
 import os
 import logging
@@ -13,9 +14,14 @@ from requests_aws4auth import AWS4Auth
 # Use IAM Role for authentication
 # Properly unmarshal DynamoDB JSON types. Binary NOT tested.
 
+FORMAT = '%(asctime)-15s %(levelname)s %(module)s.%(funcName)s %(message)s'
+DATEFMT = "%Y-%m-%d %H:%M:%S"
+logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt=DATEFMT)
+
 class Elasticsearchservice(object):
-    def __init__(self, es):
+    def __init__(self, es, table_prefix):
         self.es = es
+        self.table_prefix = table_prefix
         logging.info(es.info())
 
     def __ensure_index(self, index_name):
@@ -45,7 +51,7 @@ class Elasticsearchservice(object):
         logging.info("Success - New Index ID: %s", newId)
 
     # Process MODIFY events
-    def modify_document(self, record):
+    def modify(self, record):
         ddb_table, es_table = self.getTable(record)
         logging.info("Source Table: %s", ddb_table)
 
@@ -64,7 +70,7 @@ class Elasticsearchservice(object):
         logging.info("Success - Updated index ID: %s", docId)
 
     # Process REMOVE events
-    def remove_document(self, record):
+    def remove(self, record):
         ddb_table, es_table = self.getTable(record)
         logging.info("Source Table: %s", ddb_table)
 
@@ -76,28 +82,15 @@ class Elasticsearchservice(object):
         logging.info("Successly removed")
 
     def getTable(self, record):
-        pass
-
-    def generateId(self, record):
-        pass
-
-    def unmarshalJson(self, node):
-        pass
-    def unmarshalValue(self, node):
-        pass
-
-class ElasticsearchserviceDynamo(object):
-    def __init__(self, es, table_prefix):
-        self.table_prefix = table_prefix
-        super(ElasticsearchserviceDynamo, self).__init__(es)
-
-    def getTable(self, record):
         p = re.compile('arn:aws:dynamodb:.*?:.*?:table/([0-9a-zA-Z_-]+)/.+')
         m = p.match(record['eventSourceARN'])
         if m is None:
             raise Exception("Table not found in SourceARN")
         real_table = m.group(1).lower()
-        return real_table, '{0}-{1}'.format(self.table_prefix, real_table)
+        ess_table = real_table
+        if self.table_prefix:
+            ess_table = '{0}-{1}'.format(self.table_prefix, real_table)
+        return real_table, ess_table
 
     # Generate the ID for ES. Used for deleting or updating item later
 
@@ -128,33 +121,43 @@ class ElasticsearchserviceDynamo(object):
 
 
     def unmarshalValue(self, node, forceNum=False):
-        for key, value in node.items():
-            if (key == "NULL"):
-                return None
-            if (key == "S" or key == "BOOL"):
-                return value
-            if (key == "N"):
-                if (forceNum):
-                    return int_or_float(value)
-                return value
-            if (key == "M"):
-                data = {}
-                for key1, value1 in value.items():
-                    data[key1] = unmarshalValue(value1, True)
-                return data
-            if (key == "SS" or key == "BS" or key == "L"):
-                data = []
-                for item in value:
-                    data.append(unmarshalValue(item))
-                return data
-            if (key == "NS"):
-                data = []
-                for item in value:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if (key == "NULL"):
+                    return None
+                if (key == "S" or key == "BOOL"):
+                    return value
+                if (key == "N"):
                     if (forceNum):
-                        data.append(int_or_float(item))
-                    else:
-                        data.append(item)
-                return data
+                        return int_or_float(value)
+                    return value
+                if (key == "M"):
+                    data = {}
+                    for key1, value1 in value.items():
+                        data[key1] = self.unmarshalValue(value1, True)
+                    return data
+                if (key == "SS" or key == "BS" or key == "L"):
+                    data = []
+                    for item in value:
+                        data.append(self.unmarshalValue(item))
+                    return data
+                if (key == "NS"):
+                    data = []
+                    for item in value:
+                        if (forceNum):
+                            data.append(int_or_float(item))
+                        else:
+                            data.append(item)
+                    return data
+        elif isinstance(node, (str, bool)):
+            return node
+        elif isinstance(node, (int, float)):
+            if (forceNum):
+                return int_or_float(node)
+        elif isinstance(node, (list, tuple)):
+            return [self.unmarshalValue(item) for item in node]
+        else:
+            logging.info('unmarshalValue unhandled type of %s: %s', type(node), node)
 
 
 def get_config(section,
@@ -182,7 +185,7 @@ def lambda_handler(event, context):
         config['es_endpoint'], http_auth=awsauth, use_ssl=True,
         verify_certs=True, connection_class=RequestsHttpConnection)
 
-    ess = ElasticsearchserviceDynamo(es, config['table_prefix'])
+    ess = Elasticsearchservice(es, config['table_prefix'])
 
     # Loop over the DynamoDB Stream records
     for record in event['Records']:
